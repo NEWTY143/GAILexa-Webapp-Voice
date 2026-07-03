@@ -3,6 +3,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import FlameOrb from './FlameOrb.jsx'
 import { useSpeechInput } from '../useSpeechInput.js'
+import { useSpeechOutput } from '../useSpeechOutput.js'
 
 marked.setOptions({ breaks: true })
 
@@ -29,10 +30,26 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
     localStorage.setItem('gailexa-voice-lang', next)
   }
 
-  const { supported: voiceSupported, listening, toggle: toggleVoice } = useSpeechInput({
+  const transcriptRef = useRef('')
+  const { supported: voiceSupported, listening, elapsed, toggle: toggleVoice } = useSpeechInput({
     lang: voiceLang,
-    onTranscript: (text) => setDraft(text),
+    maxSeconds: 30,
+    onTranscript: (text) => {
+      transcriptRef.current = text
+      setDraft(text)
+    },
+    onEnd: () => {
+      // Auto-send: whatever was heard goes straight to GAILexa
+      const text = transcriptRef.current.trim()
+      transcriptRef.current = ''
+      if (text) {
+        setDraft('')
+        onSend(text)
+      }
+    },
   })
+
+  const { supported: ttsSupported, speakingId, toggleSpeak } = useSpeechOutput()
 
   useEffect(() => {
     const el = scrollRef.current
@@ -89,7 +106,16 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
           )}
 
           {messages.map((m) => (
-            <MessageRow key={m.id} message={m} onQuickReply={submit} disabled={busy} isLastBot={m === lastBot} />
+            <MessageRow
+              key={m.id}
+              message={m}
+              onQuickReply={submit}
+              disabled={busy}
+              isLastBot={m === lastBot}
+              ttsSupported={ttsSupported}
+              speaking={speakingId === m.id}
+              onToggleSpeak={() => toggleSpeak(m.id, m.text)}
+            />
           ))}
 
           {status === 'thinking' && (
@@ -119,8 +145,8 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
               placeholder={
                 listening
                   ? isHindi
-                    ? 'सुन रहा हूँ… बोलिए'
-                    : 'Listening… speak now'
+                    ? `सुन रहा हूँ… रुकते ही भेज दूँगा (${30 - elapsed}s)`
+                    : `Listening… sends automatically when you pause (${30 - elapsed}s)`
                   : busy
                     ? 'GAILexa is responding…'
                     : 'Ask GAILexa anything…'
@@ -148,9 +174,9 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
                   type="button"
                 className={`composer__mic${listening ? ' composer__mic--on' : ''}`}
                 onClick={toggleVoice}
-                disabled={status === 'connecting'}
-                aria-label={listening ? 'Stop listening' : 'Ask with your voice'}
-                title={listening ? 'Stop listening' : 'Ask with your voice'}
+                disabled={busy}
+                aria-label={listening ? 'Stop and send' : 'Ask with your voice (auto-sends)'}
+                title={listening ? 'Stop and send' : 'Ask with your voice (auto-sends)'}
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -180,7 +206,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   )
 }
 
-function MessageRow({ message, onQuickReply, disabled, isLastBot }) {
+function MessageRow({ message, onQuickReply, disabled, isLastBot, ttsSupported, speaking, onToggleSpeak }) {
   if (message.role === 'user') {
     return (
       <div className="row row--user">
@@ -212,7 +238,31 @@ function MessageRow({ message, onQuickReply, disabled, isLastBot }) {
             ))}
           </div>
         )}
-        <time className="bubble__time">{timeFmt.format(message.at)}</time>
+        <div className="bubble__foot">
+          {ttsSupported && message.text && (
+            <button
+              type="button"
+              className={`voice-note${speaking ? ' voice-note--playing' : ''}`}
+              onClick={onToggleSpeak}
+              aria-label={speaking ? 'Stop voice note' : 'Play as voice note'}
+              title={speaking ? 'Stop' : 'Listen to this answer'}
+            >
+              {speaking ? (
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">
+                  <path d="M8 5.5v13l11-6.5z" />
+                </svg>
+              )}
+              <span className="voice-note__bars" aria-hidden="true">
+                <i /><i /><i /><i />
+              </span>
+            </button>
+          )}
+          <time className="bubble__time">{timeFmt.format(message.at)}</time>
+        </div>
       </div>
     </div>
   )

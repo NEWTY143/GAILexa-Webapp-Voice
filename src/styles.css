@@ -317,6 +317,53 @@ body {
   background: transparent;
 }
 .composer__input::placeholder { color: var(--muted); }
+/* voice note playback on bot bubbles */
+.bubble__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-top: .25rem;
+}
+.bubble__foot .bubble__time { margin-top: 0; }
+.voice-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--gas-blue-deep);
+  border-radius: 999px;
+  padding: 4px 10px 4px 8px;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+.voice-note:hover { border-color: var(--gas-blue); background: #e8f1f9; }
+.voice-note--playing {
+  color: #fff;
+  border-color: transparent;
+  background: var(--flame-grad);
+}
+.voice-note__bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.voice-note__bars i {
+  width: 2.5px;
+  height: 5px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: .75;
+}
+.voice-note--playing .voice-note__bars i { animation: eq .9s ease-in-out infinite; }
+.voice-note--playing .voice-note__bars i:nth-child(2) { animation-delay: .15s; }
+.voice-note--playing .voice-note__bars i:nth-child(3) { animation-delay: .3s; }
+.voice-note--playing .voice-note__bars i:nth-child(4) { animation-delay: .45s; }
+@keyframes eq {
+  0%, 100% { height: 4px; }
+  50%      { height: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-note--playing .voice-note__bars i { animation: none; }
+}
+
 .composer__lang {
   flex: none;
   height: 42px;
