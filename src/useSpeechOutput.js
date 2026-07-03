@@ -4,6 +4,10 @@ import { useEffect, useState } from 'react'
 export function markdownToPlainText(md = '') {
   return md
     .replace(/```[\s\S]*?```/g, ' code block omitted. ') // code blocks
+    .replace(/^\s*\[\d+\]:\s.*$/gm, '') // citation definitions: [1]: cite:1 "Doc"
+    .replace(/\[\^?\d+\^?\]/g, '') // inline citation markers: [1], [^1]
+    .replace(/[\u00B9\u00B2\u00B3\u2070\u2074-\u2079\u207A-\u207E]+/g, '') // superscript digits: ¹ ² ³
+    .replace(/cite:\d+/gi, '') // raw cite tokens
     .replace(/`([^`]+)`/g, '$1') // inline code
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1') // images
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // links → link text
