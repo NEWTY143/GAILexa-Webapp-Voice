@@ -22,29 +22,37 @@ export default function App() {
    * Text used for voice playback of a bot message.
    * Short answers are spoken as-is. Long answers are summarized by
    * GAILexa itself (hidden request) so listening stays quick — in the
-   * same language as the answer.
+   * same language as the answer. If the summary comes back too long or
+   * empty, we clamp to the first few sentences instead.
    */
   async function getSpeechText(message) {
     const original = message.text || ''
-    if (original.length < 400) return original
+    if (original.length < 300) return original
     const cached = summaryCacheRef.current[message.id]
     if (cached) return cached
-    if (!sessionRef.current || status === 'thinking' || status === 'connecting') {
-      return original // can't ask right now — speak the full text
-    }
+
     const isHindi = /[\u0900-\u097F]/.test(original)
+    // Fallback if the agent can't be asked right now: first sentences only
+    if (!sessionRef.current || status === 'thinking' || status === 'connecting') {
+      return clampSentences(original, isHindi)
+    }
+
     const prompt = isHindi
-      ? 'पिछले उत्तर को आवाज़ में सुनाने के लिए 1-2 छोटे वाक्यों में सारांश दीजिए। केवल सादा पाठ, बिना सूची या संदर्भ के।'
-      : 'For voice playback, summarize your previous answer in 1-2 short sentences. Plain text only — no lists, links, or citations.'
+      ? 'पिछले उत्तर का सारांश ठीक 1-2 छोटे वाक्यों में दीजिए। पूरा उत्तर न दोहराएँ। केवल सारांश लिखें — कोई सूची, लिंक या संदर्भ नहीं।'
+      : 'Summarize your previous answer in exactly 1-2 short sentences. Do NOT repeat the full answer. Reply with ONLY the summary — no lists, links, or citations.'
     try {
       setStatus('thinking')
-      const summary = await sessionRef.current.askHidden(prompt)
-      const result = summary || original
-      summaryCacheRef.current[message.id] = result
-      return result
+      let summary = await sessionRef.current.askHidden(prompt)
+      // Guard: if the agent ignored the brief and sent something long
+      // (or nothing), clamp to keep playback short.
+      if (!summary || summary.length > 450 || summary.length > original.length * 0.7) {
+        summary = clampSentences(summary || original, isHindi)
+      }
+      summaryCacheRef.current[message.id] = summary
+      return summary
     } catch (e) {
       console.error('Summary request failed:', e)
-      return original
+      return clampSentences(original, isHindi)
     } finally {
       setStatus('ready')
     }
@@ -153,6 +161,23 @@ export default function App() {
       getSpeechText={getSpeechText}
     />
   )
+}
+
+/**
+ * Take the first 2 sentences (max ~350 chars) — the safety net when a
+ * summary is unavailable or comes back too long. Handles the Hindi
+ * full stop (।) as well as . ! ?
+ */
+function clampSentences(text, isHindi) {
+  const plain = (text || '').replace(/\s+/g, ' ').trim()
+  const parts = plain.split(isHindi ? /(?<=[।.!?])\s+/ : /(?<=[.!?])\s+/)
+  let out = ''
+  for (const p of parts) {
+    if (out && (out + ' ' + p).length > 350) break
+    out = out ? out + ' ' + p : p
+    if (out.split(/[।.!?]/).length > 2) break
+  }
+  return out || plain.slice(0, 350)
 }
 
 function describeError(e) {

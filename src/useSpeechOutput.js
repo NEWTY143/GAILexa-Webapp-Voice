@@ -32,12 +32,45 @@ export function useSpeechOutput() {
   const supported =
     typeof window !== 'undefined' && 'speechSynthesis' in window
 
-  // Stop any playback when the component unmounts (e.g. sign-out)
+  // Voice list loads asynchronously in most browsers — warm it up and
+  // refresh our cache when it arrives.
   useEffect(() => {
+    if (!supported) return
+    const load = () => window.speechSynthesis.getVoices()
+    load()
+    window.speechSynthesis.addEventListener?.('voiceschanged', load)
     return () => {
-      if (supported) window.speechSynthesis.cancel()
+      window.speechSynthesis.removeEventListener?.('voiceschanged', load)
+      window.speechSynthesis.cancel()
     }
   }, [supported])
+
+  /**
+   * Pick the best female voice for the language.
+   * Known female voice names across Chrome/Edge/Safari for en-IN and hi-IN,
+   * then generic "female" markers, then any voice of that language.
+   */
+  function pickVoice(lang) {
+    const voices = window.speechSynthesis.getVoices()
+    if (!voices.length) return null
+    const base = lang.split('-')[0].toLowerCase()
+    const ofLang = voices.filter((v) => v.lang?.toLowerCase().startsWith(base))
+    const pool = ofLang.length ? ofLang : voices
+
+    const FEMALE_NAMES = [
+      'heera', 'swara', 'neerja', 'priya', 'veena', 'lekha', 'kalpana', // Indian voices
+      'jenny', 'aria', 'sonia', 'natasha', 'zira', 'susan', 'hazel',    // MS English voices
+      'female', 'woman',
+    ]
+    const isFemale = (v) => FEMALE_NAMES.some((n) => v.name.toLowerCase().includes(n))
+
+    return (
+      pool.find((v) => isFemale(v) && v.lang?.toLowerCase() === lang.toLowerCase()) ||
+      pool.find(isFemale) ||
+      pool.find((v) => v.lang?.toLowerCase() === lang.toLowerCase()) ||
+      pool[0]
+    )
+  }
 
   function toggleSpeak(id, markdownText) {
     if (!supported) return
@@ -56,12 +89,13 @@ export function useSpeechOutput() {
     const utterance = new SpeechSynthesisUtterance(text)
     const hasDevanagari = /[\u0900-\u097F]/.test(text)
     utterance.lang = hasDevanagari ? 'hi-IN' : 'en-IN'
-    utterance.rate = 1
 
-    // Prefer a matching installed voice if the browser has one
-    const voices = window.speechSynthesis.getVoices()
-    const match = voices.find((v) => v.lang === utterance.lang)
-    if (match) utterance.voice = match
+    // Smooth, professional delivery
+    utterance.rate = 0.98
+    utterance.pitch = 1.05
+
+    const voice = pickVoice(utterance.lang)
+    if (voice) utterance.voice = voice
 
     utterance.onend = () => setSpeakingId(null)
     utterance.onerror = () => setSpeakingId(null)
