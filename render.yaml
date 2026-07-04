@@ -1,4 +1,5 @@
 services:
+  # Frontend — static React site
   - type: web
     name: gailexa-web
     runtime: static
@@ -11,7 +12,19 @@ services:
         sync: false
       - key: VITE_DIRECT_CONNECT_URL
         sync: false
+      - key: VITE_WHISPER_URL
+        sync: false
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
+
+  # Whisper speech-to-text service (faster-whisper, Docker)
+  - type: web
+    name: gailexa-whisper
+    runtime: docker
+    rootDir: server
+    plan: free
+    envVars:
+      - key: WHISPER_MODEL
+        value: tiny

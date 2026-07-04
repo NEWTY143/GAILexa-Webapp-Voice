@@ -3,7 +3,9 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import FlameOrb from './FlameOrb.jsx'
 import { useSpeechInput } from '../useSpeechInput.js'
+import { useWhisperInput } from '../useWhisperInput.js'
 import { useSpeechOutput } from '../useSpeechOutput.js'
+import { appConfig } from '../config.js'
 
 marked.setOptions({ breaks: true })
 
@@ -13,32 +15,46 @@ function renderMarkdown(text) {
 
 const timeFmt = new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit' })
 
-export default function Chat({ account, messages, status, error, onSend, onSignOut }) {
+export default function Chat({ account, messages, status, error, onSend, onSignOut, getSpeechText }) {
   const [draft, setDraft] = useState('')
   const scrollRef = useRef(null)
   const inputRef = useRef(null)
   const busy = status === 'thinking' || status === 'connecting'
 
-  const [voiceLang, setVoiceLang] = useState(
-    () => localStorage.getItem('gailexa-voice-lang') || 'en-IN'
-  )
+  // Whisper mode: on when the transcription service URL is configured.
+  // Whisper detects Hindi/English automatically, so no language toggle.
+  const whisperOn = Boolean(appConfig.whisperUrl)
+
+  // Voice language for the Web Speech fallback: 'auto' | 'en-IN' | 'hi-IN'
+  // AUTO uses the hi-IN recognizer, which handles mixed Hindi-English
+  // (Hinglish) speech — the browser cannot listen in two languages at once.
+  const LANG_MODES = ['auto', 'en-IN', 'hi-IN']
+  const LANG_LABEL = { auto: 'AUTO', 'en-IN': 'EN', 'hi-IN': 'हिं' }
+  const [voiceLang, setVoiceLang] = useState(() => {
+    const saved = localStorage.getItem('gailexa-voice-lang')
+    return LANG_MODES.includes(saved) ? saved : 'auto'
+  })
   const isHindi = voiceLang === 'hi-IN'
+  const effectiveLang = voiceLang === 'en-IN' ? 'en-IN' : 'hi-IN'
 
   function toggleLang() {
-    const next = isHindi ? 'en-IN' : 'hi-IN'
+    const next = LANG_MODES[(LANG_MODES.indexOf(voiceLang) + 1) % LANG_MODES.length]
     setVoiceLang(next)
     localStorage.setItem('gailexa-voice-lang', next)
   }
 
+  // --- Web Speech fallback (used when no Whisper URL is configured) -------
   const transcriptRef = useRef('')
-  const { supported: voiceSupported, listening, elapsed, toggle: toggleVoice } = useSpeechInput({
-    lang: voiceLang,
+  const webSpeech = useSpeechInput({
+    lang: effectiveLang,
     maxSeconds: 30,
     onTranscript: (text) => {
+      if (whisperOn) return
       transcriptRef.current = text
       setDraft(text)
     },
     onEnd: () => {
+      if (whisperOn) return
       // Auto-send: whatever was heard goes straight to GAILexa
       const text = transcriptRef.current.trim()
       transcriptRef.current = ''
@@ -49,7 +65,41 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
     },
   })
 
+  // --- Whisper input (records audio, server transcribes + detects lang) ---
+  const whisper = useWhisperInput({
+    endpoint: appConfig.whisperUrl,
+    maxSeconds: 30,
+    onResult: (text) => {
+      if (text) onSend(text) // auto-send; Copilot replies in the same language
+      setDraft('')
+    },
+  })
+
+  // Unified voice state used by the UI
+  const voiceSupported = whisperOn ? whisper.supported : webSpeech.supported
+  const listening = whisperOn ? whisper.phase === 'recording' : webSpeech.listening
+  const transcribing = whisperOn && whisper.phase === 'transcribing'
+  const elapsed = whisperOn ? whisper.elapsed : webSpeech.elapsed
+  const toggleVoice = whisperOn ? whisper.toggle : webSpeech.toggle
+
   const { supported: ttsSupported, speakingId, toggleSpeak } = useSpeechOutput()
+
+  // Voice-note click: long answers are summarized by GAILexa before playback
+  const [preparingId, setPreparingId] = useState(null)
+  async function handleSpeak(message) {
+    if (speakingId === message.id) {
+      toggleSpeak(message.id, message.text) // same id → stop
+      return
+    }
+    if (preparingId) return
+    try {
+      setPreparingId(message.id)
+      const text = getSpeechText ? await getSpeechText(message) : message.text
+      toggleSpeak(message.id, text)
+    } finally {
+      setPreparingId(null)
+    }
+  }
 
   useEffect(() => {
     const el = scrollRef.current
@@ -114,7 +164,8 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
               isLastBot={m === lastBot}
               ttsSupported={ttsSupported}
               speaking={speakingId === m.id}
-              onToggleSpeak={() => toggleSpeak(m.id, m.text)}
+              preparing={preparingId === m.id}
+              onToggleSpeak={() => handleSpeak(m)}
             />
           ))}
 
@@ -143,40 +194,60 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder={
-                listening
-                  ? isHindi
-                    ? `सुन रहा हूँ… रुकते ही भेज दूँगा (${30 - elapsed}s)`
-                    : `Listening… sends automatically when you pause (${30 - elapsed}s)`
-                  : busy
-                    ? 'GAILexa is responding…'
-                    : 'Ask GAILexa anything…'
+                transcribing
+                  ? 'Understanding your voice…'
+                  : listening
+                    ? whisperOn
+                      ? `Listening (auto Hindi/English)… sends when you stop (${30 - elapsed}s)`
+                      : isHindi
+                        ? `सुन रहा हूँ… रुकते ही भेज दूँगा (${30 - elapsed}s)`
+                        : `Listening… sends automatically when you pause (${30 - elapsed}s)`
+                    : busy
+                      ? 'GAILexa is responding…'
+                      : 'Ask GAILexa anything…'
               }
               disabled={status === 'connecting'}
               autoFocus
             />
             {voiceSupported && (
               <>
+                {!whisperOn && (
+                  <button
+                    type="button"
+                    className="composer__lang"
+                    onClick={toggleLang}
+                    disabled={listening}
+                    aria-label={`Voice language: ${LANG_LABEL[voiceLang]}. Tap to change.`}
+                    title={
+                      voiceLang === 'auto'
+                        ? 'Voice: Auto (Hindi + English) — tap for English only'
+                        : voiceLang === 'en-IN'
+                          ? 'Voice: English — tap for हिंदी'
+                          : 'Voice: हिंदी — tap for Auto'
+                    }
+                  >
+                    {LANG_LABEL[voiceLang]}
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="composer__lang"
-                  onClick={toggleLang}
-                  disabled={listening}
-                  aria-label={
-                    isHindi
-                      ? 'Voice language: Hindi. Switch to English.'
-                      : 'Voice language: English. Switch to Hindi.'
-                  }
-                  title={isHindi ? 'Voice: हिंदी — switch to English' : 'Voice: English — switch to हिंदी'}
-                >
-                  {isHindi ? 'हिं' : 'EN'}
-                </button>
-                <button
-                  type="button"
-                className={`composer__mic${listening ? ' composer__mic--on' : ''}`}
+                className={`composer__mic${listening ? ' composer__mic--on' : ''}${transcribing ? ' composer__mic--busy' : ''}`}
                 onClick={toggleVoice}
-                disabled={busy}
-                aria-label={listening ? 'Stop and send' : 'Ask with your voice (auto-sends)'}
-                title={listening ? 'Stop and send' : 'Ask with your voice (auto-sends)'}
+                disabled={busy || transcribing}
+                aria-label={
+                  transcribing
+                    ? 'Understanding your voice…'
+                    : listening
+                      ? 'Stop and send'
+                      : 'Ask with your voice (auto-detects Hindi/English, auto-sends)'
+                }
+                title={
+                  transcribing
+                    ? 'Understanding your voice…'
+                    : listening
+                      ? 'Stop and send'
+                      : 'Ask with your voice (auto-sends)'
+                }
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -198,7 +269,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
             </button>
           </form>
           <p className="composer__hint">
-            GAILexa can make mistakes — verify important information.
+            GAILexa can make mistakes — verify important information. | Developed by BIS Department 2026
           </p>
         </div>
       </footer>
@@ -206,7 +277,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   )
 }
 
-function MessageRow({ message, onQuickReply, disabled, isLastBot, ttsSupported, speaking, onToggleSpeak }) {
+function MessageRow({ message, onQuickReply, disabled, isLastBot, ttsSupported, speaking, preparing, onToggleSpeak }) {
   if (message.role === 'user') {
     return (
       <div className="row row--user">
@@ -242,10 +313,11 @@ function MessageRow({ message, onQuickReply, disabled, isLastBot, ttsSupported, 
           {ttsSupported && message.text && (
             <button
               type="button"
-              className={`voice-note${speaking ? ' voice-note--playing' : ''}`}
+              className={`voice-note${speaking ? ' voice-note--playing' : ''}${preparing ? ' voice-note--loading' : ''}`}
               onClick={onToggleSpeak}
-              aria-label={speaking ? 'Stop voice note' : 'Play as voice note'}
-              title={speaking ? 'Stop' : 'Listen to this answer'}
+              disabled={preparing}
+              aria-label={preparing ? 'Preparing summary…' : speaking ? 'Stop voice note' : 'Play as voice note'}
+              title={preparing ? 'Preparing a short summary…' : speaking ? 'Stop' : 'Listen (long answers are summarized)'}
             >
               {speaking ? (
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor">

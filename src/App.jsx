@@ -15,7 +15,40 @@ export default function App() {
   const [status, setStatus] = useState('idle') // idle | connecting | ready | thinking | error
   const [error, setError] = useState(null)
   const sessionRef = useRef(null)
+  const summaryCacheRef = useRef({})
   const missingConfig = validateConfig()
+
+  /**
+   * Text used for voice playback of a bot message.
+   * Short answers are spoken as-is. Long answers are summarized by
+   * GAILexa itself (hidden request) so listening stays quick — in the
+   * same language as the answer.
+   */
+  async function getSpeechText(message) {
+    const original = message.text || ''
+    if (original.length < 400) return original
+    const cached = summaryCacheRef.current[message.id]
+    if (cached) return cached
+    if (!sessionRef.current || status === 'thinking' || status === 'connecting') {
+      return original // can't ask right now — speak the full text
+    }
+    const isHindi = /[\u0900-\u097F]/.test(original)
+    const prompt = isHindi
+      ? 'पिछले उत्तर को आवाज़ में सुनाने के लिए 1-2 छोटे वाक्यों में सारांश दीजिए। केवल सादा पाठ, बिना सूची या संदर्भ के।'
+      : 'For voice playback, summarize your previous answer in 1-2 short sentences. Plain text only — no lists, links, or citations.'
+    try {
+      setStatus('thinking')
+      const summary = await sessionRef.current.askHidden(prompt)
+      const result = summary || original
+      summaryCacheRef.current[message.id] = result
+      return result
+    } catch (e) {
+      console.error('Summary request failed:', e)
+      return original
+    } finally {
+      setStatus('ready')
+    }
+  }
 
   // Restore a signed-in account on page load
   useEffect(() => {
@@ -117,6 +150,7 @@ export default function App() {
       error={error}
       onSend={handleSend}
       onSignOut={handleSignOut}
+      getSpeechText={getSpeechText}
     />
   )
 }

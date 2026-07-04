@@ -15,6 +15,11 @@ export const appConfig = {
   directConnectUrl:
     import.meta.env.VITE_DIRECT_CONNECT_URL ||
     'https://default288eb95defee416fb87b0470a90e53.e9.environment.api.powerplatform.com/copilotstudio/dataverse-backed/authenticated/bots/cree1_TestCHatbot/conversations?api-version=2022-03-01-preview',
+
+  // Optional: URL of the faster-whisper transcription service (server/ folder).
+  // When set, voice input uses Whisper (better accuracy + Hindi/English
+  // auto-detection). When empty, the browser's Web Speech API is used.
+  whisperUrl: import.meta.env.VITE_WHISPER_URL || '',
 }
 
 export function validateConfig() {
