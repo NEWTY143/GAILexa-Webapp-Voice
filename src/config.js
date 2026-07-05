@@ -5,6 +5,8 @@
 // environment settings on Render). See .env.example and README.md.
 // ---------------------------------------------------------------------------
 
+export const APP_VERSION = '4.0'
+
 export const appConfig = {
   // Entra ID (Azure AD) app registration — REQUIRED because the agent uses
   // Microsoft authentication. Create one in the Azure portal (see README).

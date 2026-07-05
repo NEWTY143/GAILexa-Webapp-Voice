@@ -5,7 +5,7 @@ import FlameOrb from './FlameOrb.jsx'
 import { useSpeechInput } from '../useSpeechInput.js'
 import { useWhisperInput } from '../useWhisperInput.js'
 import { useSpeechOutput } from '../useSpeechOutput.js'
-import { appConfig } from '../config.js'
+import { appConfig, APP_VERSION } from '../config.js'
 
 marked.setOptions({ breaks: true })
 
@@ -66,12 +66,21 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   })
 
   // --- Whisper input (records audio, server transcribes + detects lang) ---
+  // The clean transcript is shown in the input bar for a moment so the
+  // person can see (and interrupt) it before it auto-sends.
+  const pendingSendRef = useRef(null)
+  useEffect(() => () => clearTimeout(pendingSendRef.current), [])
   const whisper = useWhisperInput({
     endpoint: appConfig.whisperUrl,
     maxSeconds: 30,
     onResult: (text) => {
-      if (text) onSend(text) // auto-send; Copilot replies in the same language
-      setDraft('')
+      if (!text) return
+      setDraft(text) // preview the corrected transcript in the text bar
+      clearTimeout(pendingSendRef.current)
+      pendingSendRef.current = setTimeout(() => {
+        setDraft('')
+        onSend(text) // auto-send; Copilot replies in the same language
+      }, 1600)
     },
   })
 
@@ -107,6 +116,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   }, [messages, status])
 
   function submit(text) {
+    clearTimeout(pendingSendRef.current)
     onSend(text ?? draft)
     setDraft('')
     inputRef.current?.focus()
@@ -192,7 +202,10 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
               ref={inputRef}
               className="composer__input"
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                clearTimeout(pendingSendRef.current) // editing cancels auto-send
+                setDraft(e.target.value)
+              }}
               placeholder={
                 transcribing
                   ? 'Understanding your voice…'
@@ -269,7 +282,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
             </button>
           </form>
           <p className="composer__hint">
-            GAILexa can make mistakes — verify important information. | Developed by BIS Department 2026 | Version .v4(Summarize Content Included via Voice Output)
+            GAILexa can make mistakes — verify important information. | Developed by BIS Department 2026 | v{APP_VERSION}
           </p>
         </div>
       </footer>

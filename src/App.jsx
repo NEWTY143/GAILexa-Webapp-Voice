@@ -16,46 +16,69 @@ export default function App() {
   const [error, setError] = useState(null)
   const sessionRef = useRef(null)
   const summaryCacheRef = useRef({})
+  const summaryJobsRef = useRef({}) // in-flight prefetch promises by message id
+  const lastBotRef = useRef(null)
   const missingConfig = validateConfig()
 
   /**
-   * Text used for voice playback of a bot message.
-   * Short answers are spoken as-is. Long answers are summarized by
-   * GAILexa itself (hidden request) so listening stays quick — in the
-   * same language as the answer. If the summary comes back too long or
-   * empty, we clamp to the first few sentences instead.
+   * Prepare the spoken version of a bot message in the BACKGROUND, as soon
+   * as the answer arrives — so tapping play is instant. Short answers are
+   * cached as-is; long ones are summarized by GAILexa via a hidden request.
    */
-  async function getSpeechText(message) {
-    const original = message.text || ''
-    if (original.length < 300) return original
-    const cached = summaryCacheRef.current[message.id]
-    if (cached) return cached
+  function prefetchSummary(message) {
+    const id = message.id
+    if (summaryCacheRef.current[id]) return null
+    if (summaryJobsRef.current[id]) return summaryJobsRef.current[id]
 
+    const original = message.text || ''
     const isHindi = /[\u0900-\u097F]/.test(original)
-    // Fallback if the agent can't be asked right now: first sentences only
-    if (!sessionRef.current || status === 'thinking' || status === 'connecting') {
-      return clampSentences(original, isHindi)
+    if (original.length < 300) {
+      summaryCacheRef.current[id] = original
+      return null
     }
 
     const prompt = isHindi
       ? 'पिछले उत्तर का सारांश ठीक 1-2 छोटे वाक्यों में दीजिए। पूरा उत्तर न दोहराएँ। केवल सारांश लिखें — कोई सूची, लिंक या संदर्भ नहीं।'
       : 'Summarize your previous answer in exactly 1-2 short sentences. Do NOT repeat the full answer. Reply with ONLY the summary — no lists, links, or citations.'
-    try {
-      setStatus('thinking')
-      let summary = await sessionRef.current.askHidden(prompt)
-      // Guard: if the agent ignored the brief and sent something long
-      // (or nothing), clamp to keep playback short.
-      if (!summary || summary.length > 450 || summary.length > original.length * 0.7) {
-        summary = clampSentences(summary || original, isHindi)
+
+    const job = (async () => {
+      try {
+        let summary = await sessionRef.current.askHidden(prompt)
+        if (!summary || summary.length > 450 || summary.length > original.length * 0.7) {
+          summary = clampSentences(summary || original, isHindi)
+        }
+        summaryCacheRef.current[id] = summary
+      } catch (e) {
+        console.error('Summary prefetch failed:', e)
+        summaryCacheRef.current[id] = clampSentences(original, isHindi)
+      } finally {
+        delete summaryJobsRef.current[id]
       }
-      summaryCacheRef.current[message.id] = summary
-      return summary
-    } catch (e) {
-      console.error('Summary request failed:', e)
-      return clampSentences(original, isHindi)
-    } finally {
-      setStatus('ready')
-    }
+    })()
+    summaryJobsRef.current[id] = job
+    return job
+  }
+
+  /** Wait for any hidden summary request to finish before a new user turn,
+   *  so two messages never stream through the conversation at once. */
+  async function drainSummaryJobs() {
+    const jobs = Object.values(summaryJobsRef.current)
+    if (jobs.length) await Promise.allSettled(jobs)
+  }
+
+  /**
+   * Text for voice playback. Usually already cached by prefetchSummary —
+   * so this returns instantly. Falls back to on-demand prep if not.
+   */
+  async function getSpeechText(message) {
+    const cached = summaryCacheRef.current[message.id]
+    if (cached) return cached
+    const job = summaryJobsRef.current[message.id] || prefetchSummary(message)
+    if (job) await job
+    return (
+      summaryCacheRef.current[message.id] ??
+      clampSentences(message.text || '', /[\u0900-\u097F]/.test(message.text || ''))
+    )
   }
 
   // Restore a signed-in account on page load
@@ -73,7 +96,10 @@ export default function App() {
     setStatus('connecting')
     session
       .start((activity) => handleActivity(activity))
-      .then(() => setStatus('ready'))
+      .then(() => {
+        setStatus('ready')
+        if (lastBotRef.current) prefetchSummary(lastBotRef.current)
+      })
       .catch((e) => {
         console.error(e)
         setError(describeError(e))
@@ -85,9 +111,7 @@ export default function App() {
   function handleActivity(activity) {
     if (!activity || !activity.type) return
     if (activity.type === 'message' && (activity.text || activity.suggestedActions)) {
-      setMessages((prev) => [
-        ...prev,
-        {
+      const botMessage = {
           id: nextId(),
           role: 'bot',
           text: activity.text || '',
@@ -95,8 +119,9 @@ export default function App() {
             activity.suggestedActions?.actions?.map((a) => a.title || a.value).filter(Boolean) ??
             [],
           at: new Date(),
-        },
-      ])
+      }
+      lastBotRef.current = botMessage
+      setMessages((prev) => [...prev, botMessage])
     }
   }
 
@@ -129,8 +154,11 @@ export default function App() {
     ])
     setStatus('thinking')
     try {
+      await drainSummaryJobs() // never overlap a hidden request with a user turn
       await sessionRef.current.send(trimmed, (activity) => handleActivity(activity))
       setStatus('ready')
+      // Fire-and-forget: prepare the voice summary while the user reads
+      if (lastBotRef.current) prefetchSummary(lastBotRef.current)
     } catch (e) {
       console.error(e)
       setError(describeError(e))
