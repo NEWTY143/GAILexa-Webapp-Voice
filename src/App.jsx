@@ -44,9 +44,18 @@ export default function App() {
     const job = (async () => {
       try {
         const summary = await sessionRef.current.askHidden(prompt)
-        // A valid summary is non-empty and meaningfully shorter than the
-        // original. Otherwise, fall back to reading the full text directly.
-        const valid = summary && summary.length <= 450 && summary.length <= original.length * 0.7
+        // A valid summary is non-empty, meaningfully shorter than the
+        // original, and NOT a refusal like "Sorry, can you rephrase?".
+        // Otherwise, fall back to reading the full text directly.
+        const looksLikeRefusal =
+          /sorry|rephrase|try again|didn'?t (understand|get|catch)|couldn'?t (find|help)|unable to|no information|माफ|क्षमा|समझ नहीं|दोबारा/i.test(
+            summary || ''
+          )
+        const valid =
+          summary &&
+          !looksLikeRefusal &&
+          summary.length <= 450 &&
+          summary.length <= original.length * 0.7
         summaryCacheRef.current[id] = valid ? summary : original
       } catch (e) {
         console.error('Summary prefetch failed — will read the full text:', e)
