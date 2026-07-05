@@ -498,3 +498,13 @@ body {
   .chat__column { max-width: 96vw; }
   .bubble { max-width: 84%; }
 }
+
+
+/* GAIL corporate logo in the header (drop the file at public/gail-logo.png) */
+.chat__gail-logo {
+  height: clamp(28px, 2.2vw + 20px, 42px); /* scales smoothly with viewport */
+  width: auto;
+  object-fit: contain;
+  display: block;
+  flex: none;
+}

@@ -133,6 +133,12 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
         </div>
         <div className="chat__user">
           <span className="chat__avatar" title={account?.username}>{initials}</span>
+          <img
+            className="chat__gail-logo"
+            src="/gail-logo.png"
+            alt="GAIL (India) Limited"
+            onError={(e) => { e.currentTarget.style.display = 'none' }}
+          />
           <button className="btn btn--ghost" onClick={onSignOut}>Sign out</button>
         </div>
       </header>
