@@ -154,14 +154,14 @@ body {
 .chat__header {
   flex: none;
   background: var(--card);
-  padding: 0.8rem 1.25rem;
+  padding: clamp(0.6rem, 1vw, 0.9rem) clamp(0.9rem, 2.5vw, 1.75rem);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
 }
 .chat__brand { display: flex; align-items: center; gap: 0.75rem; }
-.chat__title { font: 700 1.15rem var(--font-display); letter-spacing: -0.01em; }
+.chat__title { font: 700 clamp(1.05rem, 0.95rem + 0.4vw, 1.3rem) var(--font-display); letter-spacing: -0.01em; }
 .chat__status {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -197,9 +197,10 @@ body {
 
 .chat__scroll { flex: 1; overflow-y: auto; }
 .chat__column {
-  max-width: 900px;
+  width: 100%;
+  max-width: min(1100px, 94vw);
   margin: 0 auto;
-  padding: 1.25rem 1rem;
+  padding: clamp(0.75rem, 1.5vw, 1.5rem) clamp(0.75rem, 2.5vw, 1.5rem);
 }
 .chat__empty {
   text-align: center;
@@ -217,11 +218,11 @@ body {
 .row--bot { justify-content: flex-start; }
 
 .bubble {
-  max-width: min(78%, 560px);
+  max-width: min(78%, 640px);
   border-radius: var(--radius-lg);
   padding: 0.75rem 1rem 0.45rem;
   box-shadow: var(--shadow);
-  font-size: 0.95rem;
+  font-size: clamp(0.9rem, 0.85rem + 0.25vw, 1.02rem);
   line-height: 1.55;
 }
 .bubble p { margin: 0 0 0.35rem; }
@@ -316,8 +317,8 @@ body {
   min-width: 0; /* lets the input shrink instead of pushing buttons off-screen */
   border: none;
   outline: none;
-  font: 400 1rem var(--font-body);
-  height: 46px;
+  font: 400 clamp(0.92rem, 0.85rem + 0.3vw, 1.05rem) var(--font-body);
+  height: clamp(42px, 4.5vh, 48px);
   color: var(--ink);
   background: transparent;
 }
@@ -483,4 +484,17 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
   .composer__mic--busy, .voice-note--loading .voice-note__bars i { animation: none; }
+}
+
+
+/* large desktop screens (1600px and up) */
+@media (min-width: 1600px) {
+  .chat__column { max-width: 1240px; }
+  .bubble { max-width: min(72%, 720px); }
+}
+
+/* tablets & small laptops */
+@media (min-width: 561px) and (max-width: 900px) {
+  .chat__column { max-width: 96vw; }
+  .bubble { max-width: 84%; }
 }

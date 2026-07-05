@@ -25,28 +25,10 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   // Whisper detects Hindi/English automatically, so no language toggle.
   const whisperOn = Boolean(appConfig.whisperUrl)
 
-  // Voice language for the Web Speech fallback: 'auto' | 'en-IN' | 'hi-IN'
-  // AUTO uses the hi-IN recognizer, which handles mixed Hindi-English
-  // (Hinglish) speech — the browser cannot listen in two languages at once.
-  const LANG_MODES = ['auto', 'en-IN', 'hi-IN']
-  const LANG_LABEL = { auto: 'AUTO', 'en-IN': 'EN', 'hi-IN': 'हिं' }
-  const [voiceLang, setVoiceLang] = useState(() => {
-    const saved = localStorage.getItem('gailexa-voice-lang')
-    return LANG_MODES.includes(saved) ? saved : 'auto'
-  })
-  const isHindi = voiceLang === 'hi-IN'
-  const effectiveLang = voiceLang === 'en-IN' ? 'en-IN' : 'hi-IN'
-
-  function toggleLang() {
-    const next = LANG_MODES[(LANG_MODES.indexOf(voiceLang) + 1) % LANG_MODES.length]
-    setVoiceLang(next)
-    localStorage.setItem('gailexa-voice-lang', next)
-  }
-
   // --- Web Speech fallback (used when no Whisper URL is configured) -------
   const transcriptRef = useRef('')
   const webSpeech = useSpeechInput({
-    lang: effectiveLang,
+    lang: 'en-IN',
     maxSeconds: 30,
     onTranscript: (text) => {
       if (whisperOn) return
@@ -211,10 +193,8 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
                   ? 'Understanding your voice…'
                   : listening
                     ? whisperOn
-                      ? `Listening (auto Hindi/English)… sends when you stop (${30 - elapsed}s)`
-                      : isHindi
-                        ? `सुन रहा हूँ… रुकते ही भेज दूँगा (${30 - elapsed}s)`
-                        : `Listening… sends automatically when you pause (${30 - elapsed}s)`
+                      ? `Listening… sends when you stop (${30 - elapsed}s)`
+                      : `Listening… sends automatically when you pause (${30 - elapsed}s)`
                     : busy
                       ? 'GAILexa is responding…'
                       : 'Ask GAILexa anything…'
@@ -224,24 +204,6 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
             />
             {voiceSupported && (
               <>
-                {!whisperOn && (
-                  <button
-                    type="button"
-                    className="composer__lang"
-                    onClick={toggleLang}
-                    disabled={listening}
-                    aria-label={`Voice language: ${LANG_LABEL[voiceLang]}. Tap to change.`}
-                    title={
-                      voiceLang === 'auto'
-                        ? 'Voice: Auto (Hindi + English) — tap for English only'
-                        : voiceLang === 'en-IN'
-                          ? 'Voice: English — tap for हिंदी'
-                          : 'Voice: हिंदी — tap for Auto'
-                    }
-                  >
-                    {LANG_LABEL[voiceLang]}
-                  </button>
-                )}
                 <button
                   type="button"
                 className={`composer__mic${listening ? ' composer__mic--on' : ''}${transcribing ? ' composer__mic--busy' : ''}`}
