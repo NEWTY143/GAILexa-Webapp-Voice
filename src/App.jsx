@@ -43,14 +43,14 @@ export default function App() {
 
     const job = (async () => {
       try {
-        let summary = await sessionRef.current.askHidden(prompt)
-        if (!summary || summary.length > 450 || summary.length > original.length * 0.7) {
-          summary = clampSentences(summary || original, isHindi)
-        }
-        summaryCacheRef.current[id] = summary
+        const summary = await sessionRef.current.askHidden(prompt)
+        // A valid summary is non-empty and meaningfully shorter than the
+        // original. Otherwise, fall back to reading the full text directly.
+        const valid = summary && summary.length <= 450 && summary.length <= original.length * 0.7
+        summaryCacheRef.current[id] = valid ? summary : original
       } catch (e) {
-        console.error('Summary prefetch failed:', e)
-        summaryCacheRef.current[id] = clampSentences(original, isHindi)
+        console.error('Summary prefetch failed — will read the full text:', e)
+        summaryCacheRef.current[id] = original
       } finally {
         delete summaryJobsRef.current[id]
       }
@@ -75,10 +75,7 @@ export default function App() {
     if (cached) return cached
     const job = summaryJobsRef.current[message.id] || prefetchSummary(message)
     if (job) await job
-    return (
-      summaryCacheRef.current[message.id] ??
-      clampSentences(message.text || '', /[\u0900-\u097F]/.test(message.text || ''))
-    )
+    return summaryCacheRef.current[message.id] ?? (message.text || '')
   }
 
   // Restore a signed-in account on page load
@@ -189,23 +186,6 @@ export default function App() {
       getSpeechText={getSpeechText}
     />
   )
-}
-
-/**
- * Take the first 2 sentences (max ~350 chars) — the safety net when a
- * summary is unavailable or comes back too long. Handles the Hindi
- * full stop (।) as well as . ! ?
- */
-function clampSentences(text, isHindi) {
-  const plain = (text || '').replace(/\s+/g, ' ').trim()
-  const parts = plain.split(isHindi ? /(?<=[।.!?])\s+/ : /(?<=[.!?])\s+/)
-  let out = ''
-  for (const p of parts) {
-    if (out && (out + ' ' + p).length > 350) break
-    out = out ? out + ' ' + p : p
-    if (out.split(/[।.!?]/).length > 2) break
-  }
-  return out || plain.slice(0, 350)
 }
 
 function describeError(e) {
