@@ -9,24 +9,87 @@ import { appConfig, APP_VERSION } from '../config.js'
 
 marked.setOptions({ breaks: true })
 
+// Every link in a bot message opens in a new tab
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A') {
+    node.setAttribute('target', '_blank')
+    node.setAttribute('rel', 'noopener noreferrer')
+  }
+})
+
 /**
- * Show citations in parentheses: "…limits [1]." → "…limits (1)."
+ * DOCUMENT LINK MAP — citations from Copilot Studio "file group" sources
+ * carry only an internal token (cite:1), not a real URL. So we bundle the
+ * source PDFs with the web app (public/docs/) and match them by the
+ * document title in the citation definition, e.g.
+ *   [1]: cite:1 "GAIL Annual Report 2024-25"
+ * Add/rename entries here if the knowledge base changes.
+ */
+const DOC_LINKS = [
+  { match: /annual\s*report/i, href: '/docs/gail-annual-report-2024-25.pdf', label: 'GAIL Annual Report 2024-25' },
+  { match: /faq|analyst\s*meet/i, href: '/docs/faq-2025-analyst-meet.pdf', label: 'FAQ 2025 – Analyst Meet' },
+  { match: /vision\s*2040/i, href: '/docs/vision-2040.pdf', label: 'Vision 2040 – Natural Gas Infrastructure in India' },
+  { match: /delegation|(^|[\W_])dop([\W_]|$)/i, href: '/docs/delegation-of-powers.pdf', label: 'Delegation of Powers (updated 21.11.2025)' },
+  { match: /hlec/i, href: '/docs/hlec.pdf', label: 'HLEC – High Level Expert Committee' },
+  { match: /(^|[\W_])csr([\W_]|$)/i, href: '/docs/csr.pdf', label: 'CSR' },
+]
+
+/**
+ * Show citations in parentheses — and make them CLICKABLE when we know
+ * the source: "…limits [1]." → "…limits (1)." where 1 opens the PDF.
  * Handles the marker styles Copilot Studio emits:
  *   [1]  [^1^]  and superscript digits ¹ ² ³
- * Reference definition lines like `[1]: cite:1 "Doc"` are left intact so
- * marked can still resolve them (they don't render as visible text).
+ * Resolution order per citation number:
+ *   real http(s) URL in the definition → link to it
+ *   title matches DOC_LINKS           → link to the bundled PDF
+ *   otherwise                         → plain (n)
  */
 const SUPERSCRIPTS = { '\u2070': '0', '\u00B9': '1', '\u00B2': '2', '\u00B3': '3', '\u2074': '4', '\u2075': '5', '\u2076': '6', '\u2077': '7', '\u2078': '8', '\u2079': '9' }
+
+function parseCitationDefs(text) {
+  // Matches: [1]: cite:1 "Title"   |   [2]: https://… "Title"   |   [3]: https://…
+  const defs = {}
+  const re = /^\s*\[(\d+)\]:\s*(\S+)(?:\s+"([^"]*)")?\s*$/gm
+  let m
+  while ((m = re.exec(text))) {
+    const [, id, target, title] = m
+    const url = /^https?:\/\//i.test(target) ? target : null
+    defs[id] = { url, title: title || '' }
+  }
+  return defs
+}
+
+function citationAnchor(n, defs) {
+  const def = defs[n]
+  let href = def?.url || null
+  let label = def?.title || ''
+  if (!href && label) {
+    const doc = DOC_LINKS.find((d) => d.match.test(label))
+    if (doc) { href = doc.href; label = doc.label }
+  }
+  if (!href) return `(${n})`
+  const safeTitle = label.replace(/"/g, '&quot;')
+  return `(<a class="cite-link" href="${href}" title="${safeTitle}">${n}</a>)`
+}
+
 function formatCitations(text = '') {
-  return text
-    // [^1^] → ([1])
-    .replace(/\[\^(\d+)\^\]/g, '([$1])')
-    // [1] not already a real link "[1](url)" and not a definition "[1]: …"
-    .replace(/(?<!\()\[(\d+)\](?!\(|:)/g, '([$1])')
-    // runs of superscript digits → (n)
-    .replace(/[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+/g, (run) =>
-      `(${[...run].map((c) => SUPERSCRIPTS[c] ?? '').join('')})`
-    )
+  const defs = parseCitationDefs(text)
+  return (
+    text
+      // definition lines are consumed here — remove them from the display
+      .replace(/^\s*\[\d+\]:\s*\S+(?:\s+"[^"]*")?\s*$/gm, '')
+      // [^1^] → (1) or (1‑as‑link)
+      .replace(/\[\^(\d+)\^\]/g, (_, n) => citationAnchor(n, defs))
+      // [1] not a real link "[1](url)" and not a definition "[1]: …"
+      .replace(/(?<!\()\[(\d+)\](?!\(|:)/g, (_, n) => citationAnchor(n, defs))
+      // runs of superscript digits → (n)
+      .replace(/[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+/g, (run) => {
+        const n = [...run].map((c) => SUPERSCRIPTS[c] ?? '').join('')
+        return citationAnchor(n, defs)
+      })
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  )
 }
 
 function renderMarkdown(text) {

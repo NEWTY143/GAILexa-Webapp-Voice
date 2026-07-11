@@ -508,3 +508,16 @@ body {
   display: block;
   flex: none;
 }
+
+/* Clickable citation numbers → open the source PDF in a new tab */
+.cite-link {
+  color: #0f9b8e;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+  cursor: pointer;
+}
+.cite-link:hover {
+  color: #0b7d73;
+  border-bottom-style: solid;
+}
