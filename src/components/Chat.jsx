@@ -9,8 +9,28 @@ import { appConfig, APP_VERSION } from '../config.js'
 
 marked.setOptions({ breaks: true })
 
+/**
+ * Show citations in parentheses: "…limits [1]." → "…limits (1)."
+ * Handles the marker styles Copilot Studio emits:
+ *   [1]  [^1^]  and superscript digits ¹ ² ³
+ * Reference definition lines like `[1]: cite:1 "Doc"` are left intact so
+ * marked can still resolve them (they don't render as visible text).
+ */
+const SUPERSCRIPTS = { '\u2070': '0', '\u00B9': '1', '\u00B2': '2', '\u00B3': '3', '\u2074': '4', '\u2075': '5', '\u2076': '6', '\u2077': '7', '\u2078': '8', '\u2079': '9' }
+function formatCitations(text = '') {
+  return text
+    // [^1^] → ([1])
+    .replace(/\[\^(\d+)\^\]/g, '([$1])')
+    // [1] not already a real link "[1](url)" and not a definition "[1]: …"
+    .replace(/(?<!\()\[(\d+)\](?!\(|:)/g, '([$1])')
+    // runs of superscript digits → (n)
+    .replace(/[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+/g, (run) =>
+      `(${[...run].map((c) => SUPERSCRIPTS[c] ?? '').join('')})`
+    )
+}
+
 function renderMarkdown(text) {
-  return { __html: DOMPurify.sanitize(marked.parse(text || '')) }
+  return { __html: DOMPurify.sanitize(marked.parse(formatCitations(text || ''))) }
 }
 
 const timeFmt = new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit' })
@@ -29,7 +49,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   const transcriptRef = useRef('')
   const webSpeech = useSpeechInput({
     lang: 'en-IN',
-    maxSeconds: 30,
+    maxSeconds: 10,
     onTranscript: (text) => {
       if (whisperOn) return
       transcriptRef.current = text
@@ -54,7 +74,7 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   useEffect(() => () => clearTimeout(pendingSendRef.current), [])
   const whisper = useWhisperInput({
     endpoint: appConfig.whisperUrl,
-    maxSeconds: 30,
+    maxSeconds: 10,
     onResult: (text) => {
       if (!text) return
       setDraft(text) // preview the corrected transcript in the text bar
@@ -73,7 +93,9 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
   const elapsed = whisperOn ? whisper.elapsed : webSpeech.elapsed
   const toggleVoice = whisperOn ? whisper.toggle : webSpeech.toggle
 
-  const { supported: ttsSupported, speakingId, toggleSpeak } = useSpeechOutput()
+  const { supported: ttsSupported, speakingId, toggleSpeak } = useSpeechOutput({
+    endpoint: appConfig.whisperUrl, // same backend hosts the neural female /tts voice
+  })
 
   // Voice-note click: long answers are summarized by GAILexa before playback
   const [preparingId, setPreparingId] = useState(null)
@@ -199,8 +221,8 @@ export default function Chat({ account, messages, status, error, onSend, onSignO
                   ? 'Understanding your voice…'
                   : listening
                     ? whisperOn
-                      ? `Listening… sends when you stop (${30 - elapsed}s)`
-                      : `Listening… sends automatically when you pause (${30 - elapsed}s)`
+                      ? `Listening… sends when you stop (${10 - elapsed}s)`
+                      : `Listening… sends automatically when you pause (${10 - elapsed}s)`
                     : busy
                       ? 'GAILexa is responding…'
                       : 'Ask GAILexa anything…'

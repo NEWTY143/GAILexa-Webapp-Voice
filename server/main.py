@@ -43,6 +43,48 @@ def health():
     return {"ok": True, "model": MODEL_SIZE}
 
 
+# ---------------------------------------------------------------------------
+# Text-to-speech — ONE consistent, natural female voice character.
+#   English → en-IN "Neerja"   |   Hindi → hi-IN "Swara"
+# Microsoft Edge neural voices via edge-tts: free, no API key, and they
+# sound like a person reading the text — never a robotic or male voice.
+# ---------------------------------------------------------------------------
+
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+TTS_VOICES = {
+    "en": "en-IN-NeerjaNeural",
+    "hi": "hi-IN-SwaraNeural",
+}
+TTS_MAX_CHARS = 3000  # safety cap; the app already summarizes long answers
+
+
+class TtsRequest(BaseModel):
+    text: str
+    lang: str | None = "en"  # "en" | "hi"
+
+
+@app.post("/tts")
+async def tts(req: TtsRequest):
+    import edge_tts
+
+    text = (req.text or "").strip()[:TTS_MAX_CHARS]
+    if not text:
+        return {"error": "empty text"}
+
+    voice = TTS_VOICES.get((req.lang or "en").lower()[:2], TTS_VOICES["en"])
+    # Slightly unhurried pace for a warm, human read-aloud feel
+    communicate = edge_tts.Communicate(text, voice, rate="-5%")
+
+    async def stream():
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                yield chunk["data"]
+
+    return StreamingResponse(stream(), media_type="audio/mpeg")
+
+
 @app.post("/transcribe")
 async def transcribe(audio: UploadFile = File(...)):
     suffix = os.path.splitext(audio.filename or "clip.webm")[1] or ".webm"

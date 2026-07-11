@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 
 /**
  * Voice input via the faster-whisper backend.
- * Records up to maxSeconds with MediaRecorder, uploads the clip to
+ * Records up to maxSeconds (default 10s) with MediaRecorder, uploads the clip to
  * `${endpoint}/transcribe`, and returns the text + detected language
  * ('en', 'hi', …). Whisper detects the language automatically — no toggle.
  *
  * Phases: 'idle' → 'recording' → 'transcribing' → 'idle'
  */
-export function useWhisperInput({ endpoint, maxSeconds = 30, onResult }) {
+export function useWhisperInput({ endpoint, maxSeconds = 10, onResult }) {
   const [phase, setPhase] = useState('idle')
   const [elapsed, setElapsed] = useState(0)
   const recorderRef = useRef(null)

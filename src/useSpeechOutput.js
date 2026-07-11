@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /** Strip markdown so the spoken text sounds natural. */
 export function markdownToPlainText(md = '') {
   return md
     .replace(/```[\s\S]*?```/g, ' code block omitted. ') // code blocks
     .replace(/^\s*\[\d+\]:\s.*$/gm, '') // citation definitions: [1]: cite:1 "Doc"
+    .replace(/\(\[?\d{1,2}\]?\)/g, '') // parenthesised citations: ([1]) (1)
     .replace(/\[\^?\d+\^?\]/g, '') // inline citation markers: [1], [^1]
     .replace(/[\u00B9\u00B2\u00B3\u2070\u2074-\u2079\u207A-\u207E]+/g, '') // superscript digits: ¹ ² ³
     .replace(/cite:\d+/gi, '') // raw cite tokens
@@ -19,89 +20,158 @@ export function markdownToPlainText(md = '') {
     .trim()
 }
 
-/**
- * Voice-note style playback using the browser's built-in speechSynthesis.
- * No package, no API key. Detects Devanagari to pick a Hindi voice.
- *
- * Usage:
- *   const { supported, speakingId, toggleSpeak } = useSpeechOutput()
- *   toggleSpeak(message.id, message.text)   // play; call again to stop
- */
-export function useSpeechOutput() {
-  const [speakingId, setSpeakingId] = useState(null)
-  const supported =
-    typeof window !== 'undefined' && 'speechSynthesis' in window
+// ---------------------------------------------------------------------------
+// Voice character: ONE consistent female voice, every time.
+//
+// 1) Preferred: neural TTS from the backend (/tts, edge-tts) —
+//    en-IN "Neerja" for English, hi-IN "Swara" for Hindi. Warm, natural,
+//    human-sounding, and identical on every browser and device.
+// 2) Fallback (no backend / request failed): the browser's speechSynthesis,
+//    restricted to a fixed, priority-ordered list of FEMALE voices only.
+//    The chosen voice is cached so it never changes mid-session, and a
+//    male-name blocklist guarantees a male voice is never selected.
+// ---------------------------------------------------------------------------
 
-  // Voice list loads asynchronously in most browsers — warm it up and
-  // refresh our cache when it arrives.
+// Priority order — first match wins. Indian female voices first.
+const FEMALE_PRIORITY = [
+  'neerja', 'swara', 'heera', 'priya', 'veena', 'lekha', 'kalpana', 'ananya', 'aarohi', // Indian
+  'sonia', 'libby', 'maisie', 'jenny', 'aria', 'michelle', 'emma', 'ava',               // MS/neural English
+  'natasha', 'clara', 'zira', 'hazel', 'susan', 'samantha', 'karen', 'moira', 'tessa',  // other female
+]
+const MALE_BLOCKLIST = [
+  'ravi', 'hemant', 'prabhat', 'madhur', 'david', 'mark', 'guy', 'ryan', 'thomas',
+  'george', 'james', 'daniel', 'alex', 'fred', 'male', 'man',
+]
+
+export function useSpeechOutput({ endpoint = '' } = {}) {
+  const [speakingId, setSpeakingId] = useState(null)
+  const audioRef = useRef(null)          // neural playback element
+  const abortRef = useRef(null)          // cancels an in-flight /tts fetch
+  const chosenVoiceRef = useRef({})      // cached browser voice per language
+
+  const browserSupported =
+    typeof window !== 'undefined' && 'speechSynthesis' in window
+  const supported = Boolean(endpoint) || browserSupported
+
+  // Voice list loads asynchronously in most browsers — warm it up.
   useEffect(() => {
-    if (!supported) return
+    if (!browserSupported) return
     const load = () => window.speechSynthesis.getVoices()
     load()
     window.speechSynthesis.addEventListener?.('voiceschanged', load)
     return () => {
       window.speechSynthesis.removeEventListener?.('voiceschanged', load)
       window.speechSynthesis.cancel()
+      stopAudio()
     }
-  }, [supported])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browserSupported])
 
-  /**
-   * Pick the best female voice for the language.
-   * Known female voice names across Chrome/Edge/Safari for en-IN and hi-IN,
-   * then generic "female" markers, then any voice of that language.
-   */
-  function pickVoice(lang) {
-    const voices = window.speechSynthesis.getVoices()
-    if (!voices.length) return null
-    const base = lang.split('-')[0].toLowerCase()
-    const ofLang = voices.filter((v) => v.lang?.toLowerCase().startsWith(base))
-    const pool = ofLang.length ? ofLang : voices
-
-    const FEMALE_NAMES = [
-      'heera', 'swara', 'neerja', 'priya', 'veena', 'lekha', 'kalpana', // Indian voices
-      'jenny', 'aria', 'sonia', 'natasha', 'zira', 'susan', 'hazel',    // MS English voices
-      'female', 'woman',
-    ]
-    const isFemale = (v) => FEMALE_NAMES.some((n) => v.name.toLowerCase().includes(n))
-
-    return (
-      pool.find((v) => isFemale(v) && v.lang?.toLowerCase() === lang.toLowerCase()) ||
-      pool.find(isFemale) ||
-      pool.find((v) => v.lang?.toLowerCase() === lang.toLowerCase()) ||
-      pool[0]
-    )
+  function stopAudio() {
+    abortRef.current?.abort()
+    abortRef.current = null
+    const a = audioRef.current
+    if (a) {
+      a.pause()
+      if (a.src) URL.revokeObjectURL(a.src)
+      audioRef.current = null
+    }
   }
 
-  function toggleSpeak(id, markdownText) {
+  function stopAll() {
+    stopAudio()
+    if (browserSupported) window.speechSynthesis.cancel()
+    setSpeakingId(null)
+  }
+
+  /** Deterministic FEMALE-ONLY browser voice, cached per language. */
+  function pickFemaleVoice(lang) {
+    if (chosenVoiceRef.current[lang]) return chosenVoiceRef.current[lang]
+    const voices = window.speechSynthesis.getVoices()
+    if (!voices.length) return null
+
+    const name = (v) => v.name.toLowerCase()
+    const notMale = (v) => !MALE_BLOCKLIST.some((m) => name(v).includes(m))
+    const femaleRank = (v) => {
+      const i = FEMALE_PRIORITY.findIndex((f) => name(v).includes(f))
+      return i === -1 ? Infinity : i
+    }
+    const langScore = (v) => {
+      const l = (v.lang || '').toLowerCase()
+      if (l === lang.toLowerCase()) return 0            // exact: en-IN / hi-IN
+      if (l.startsWith(lang.split('-')[0].toLowerCase())) return 1 // same language
+      return 2
+    }
+
+    const candidates = voices
+      .filter(notMale)
+      .filter((v) => femaleRank(v) !== Infinity || /female|woman/i.test(v.name))
+      .sort((a, b) => langScore(a) - langScore(b) || femaleRank(a) - femaleRank(b))
+
+    const voice = candidates[0] || null // never fall back to an unknown (possibly male) voice
+    if (voice) chosenVoiceRef.current[lang] = voice
+    return voice
+  }
+
+  /** Neural female voice from the backend. Returns false if unavailable. */
+  async function speakNeural(id, text, lang) {
+    if (!endpoint) return false
+    try {
+      const controller = new AbortController()
+      abortRef.current = controller
+      const res = await fetch(`${endpoint.replace(/\/$/, '')}/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, lang: lang.startsWith('hi') ? 'hi' : 'en' }),
+        signal: controller.signal,
+      })
+      if (!res.ok) throw new Error(`TTS service returned ${res.status}`)
+      const blob = await res.blob()
+      if (!blob.size) throw new Error('Empty audio')
+
+      const audio = new Audio(URL.createObjectURL(blob))
+      audioRef.current = audio
+      audio.onended = () => { stopAudio(); setSpeakingId(null) }
+      audio.onerror = () => { stopAudio(); setSpeakingId(null) }
+      await audio.play()
+      return true
+    } catch (err) {
+      if (err?.name !== 'AbortError') console.warn('Neural TTS unavailable, falling back to browser voice:', err)
+      stopAudio()
+      return false
+    }
+  }
+
+  function speakBrowser(id, text, lang) {
+    if (!browserSupported) { setSpeakingId(null); return }
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = lang
+    // Warm, unhurried delivery — like someone reading the text to you
+    utterance.rate = 0.95
+    utterance.pitch = 1.08
+    const voice = pickFemaleVoice(lang)
+    if (voice) utterance.voice = voice
+    utterance.onend = () => setSpeakingId(null)
+    utterance.onerror = () => setSpeakingId(null)
+    window.speechSynthesis.speak(utterance)
+  }
+
+  async function toggleSpeak(id, markdownText) {
     if (!supported) return
 
     // Tapping the message that's already playing stops it
-    if (speakingId === id) {
-      window.speechSynthesis.cancel()
-      setSpeakingId(null)
-      return
-    }
+    if (speakingId === id) { stopAll(); return }
 
-    window.speechSynthesis.cancel() // stop anything else first
+    stopAll() // stop anything else first
     const text = markdownToPlainText(markdownText)
     if (!text) return
 
-    const utterance = new SpeechSynthesisUtterance(text)
     const hasDevanagari = /[\u0900-\u097F]/.test(text)
-    utterance.lang = hasDevanagari ? 'hi-IN' : 'en-IN'
-
-    // Smooth, professional delivery
-    utterance.rate = 0.98
-    utterance.pitch = 1.05
-
-    const voice = pickVoice(utterance.lang)
-    if (voice) utterance.voice = voice
-
-    utterance.onend = () => setSpeakingId(null)
-    utterance.onerror = () => setSpeakingId(null)
+    const lang = hasDevanagari ? 'hi-IN' : 'en-IN'
 
     setSpeakingId(id)
-    window.speechSynthesis.speak(utterance)
+    const ok = await speakNeural(id, text, lang)
+    if (!ok) speakBrowser(id, text, lang)
   }
 
   return { supported, speakingId, toggleSpeak }
