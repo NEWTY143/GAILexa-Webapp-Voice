@@ -64,7 +64,14 @@ class TtsRequest(BaseModel):
     text: str
     lang: str | None = "en"  # "en" | "hi"
 
-
+@app.get("/")
+def root():
+    return {
+        "service": "GAILexa Voice API",
+        "status": "running",
+        "note": "This is the backend. Open https://gailexa-web-vmyi.onrender.com for the GAILexa website.",
+    }
+  
 @app.post("/tts")
 async def tts(req: TtsRequest):
     import edge_tts
