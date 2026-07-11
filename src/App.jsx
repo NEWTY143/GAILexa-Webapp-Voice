@@ -8,6 +8,34 @@ import Chat from './components/Chat.jsx'
 let messageCounter = 0
 const nextId = () => `m-${++messageCounter}`
 
+/**
+ * Copilot Studio sends citation details (document name, sometimes a URL)
+ * in the activity's `entities` as schema.org Claim objects — NOT in the
+ * message text. Extract them into { "1": { title, url }, ... } so the
+ * chat can turn (1) into a clickable link to the source document.
+ */
+function extractCitations(activity) {
+  const out = {}
+  try {
+    for (const ent of activity?.entities || []) {
+      const claims = ent?.citation || []
+      for (const c of claims) {
+        const pos = c?.position ?? c?.number
+        if (pos == null) continue
+        const ap = c?.appearance || {}
+        out[String(pos)] = {
+          title: ap.name || ap.text || c.name || '',
+          url: ap.url || c.url || null,
+        }
+      }
+    }
+  } catch (e) {
+    console.debug('[GAILexa] citation extraction failed:', e)
+  }
+  if (Object.keys(out).length) console.debug('[GAILexa] citations:', out)
+  return out
+}
+
 export default function App() {
   const [account, setAccount] = useState(null)
   const [booting, setBooting] = useState(true)
@@ -121,6 +149,7 @@ export default function App() {
           id: nextId(),
           role: 'bot',
           text: activity.text || '',
+          citations: extractCitations(activity),
           actions:
             activity.suggestedActions?.actions?.map((a) => a.title || a.value).filter(Boolean) ??
             [],

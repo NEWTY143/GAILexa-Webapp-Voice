@@ -67,13 +67,24 @@ function citationAnchor(n, defs) {
     const doc = DOC_LINKS.find((d) => d.match.test(label))
     if (doc) { href = doc.href; label = doc.label }
   }
-  if (!href) return `(${n})`
+  if (!href) {
+    if (def) console.debug('[GAILexa] unresolved citation', n, def)
+    return `(${n})`
+  }
   const safeTitle = label.replace(/"/g, '&quot;')
   return `(<a class="cite-link" href="${href}" title="${safeTitle}">${n}</a>)`
 }
 
-function formatCitations(text = '') {
-  const defs = parseCitationDefs(text)
+function formatCitations(text = '', citations = {}) {
+  // Merge: definitions found in the text + metadata from the activity's
+  // entities (file-group PDFs usually ONLY have the latter).
+  const defs = { ...parseCitationDefs(text) }
+  for (const [n, c] of Object.entries(citations || {})) {
+    defs[n] = {
+      url: defs[n]?.url || c.url || null,
+      title: defs[n]?.title || c.title || '',
+    }
+  }
   return (
     text
       // definition lines are consumed here — remove them from the display
@@ -92,8 +103,8 @@ function formatCitations(text = '') {
   )
 }
 
-function renderMarkdown(text) {
-  return { __html: DOMPurify.sanitize(marked.parse(formatCitations(text || ''))) }
+function renderMarkdown(text, citations) {
+  return { __html: DOMPurify.sanitize(marked.parse(formatCitations(text || '', citations))) }
 }
 
 const timeFmt = new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit' })
@@ -359,7 +370,7 @@ function MessageRow({ message, onQuickReply, disabled, isLastBot, ttsSupported, 
       <FlameOrb size={32} />
       <div className="bubble bubble--bot">
         {message.text && (
-          <div className="bubble__md" dangerouslySetInnerHTML={renderMarkdown(message.text)} />
+          <div className="bubble__md" dangerouslySetInnerHTML={renderMarkdown(message.text, message.citations)} />
         )}
         {isLastBot && message.actions?.length > 0 && (
           <div className="quick-replies">
