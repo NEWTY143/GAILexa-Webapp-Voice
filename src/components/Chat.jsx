@@ -80,9 +80,11 @@ function formatCitations(text = '', citations = {}) {
   // entities (file-group PDFs usually ONLY have the latter).
   const defs = { ...parseCitationDefs(text) }
   for (const [n, c] of Object.entries(citations || {})) {
+    // Entity metadata carries the REAL document name; the text definition
+    // often only has a placeholder like "Citation-1" — so entities win.
     defs[n] = {
-      url: defs[n]?.url || c.url || null,
-      title: defs[n]?.title || c.title || '',
+      url: c.url || defs[n]?.url || null,
+      title: c.title || defs[n]?.title || '',
     }
   }
   return (
